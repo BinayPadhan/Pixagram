@@ -32,6 +32,12 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en" suppressHydrationWarning>
+      <head>
+          <link
+            href="https://fonts.googleapis.com/css2?family=Galada&display=swap"
+            rel="stylesheet"
+          />
+        </head>
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         >

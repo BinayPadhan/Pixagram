@@ -76,3 +76,10 @@
     @apply bg-background text-foreground;
   }
 }
+
+.galada-regular {
+  font-family: "Galada", cursive;
+  font-weight: 400;
+  font-style: normal;
+}
+
