@@ -1,6 +1,6 @@
 "use server";
 
-import { prisma } from "@/lib/prisma";
+import {prisma} from "@/lib/prisma";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 
@@ -16,27 +16,29 @@ export async function syncUser() {
         clerkId: userId,
       },
     });
-    if (existingUser) return;
+
+    if (existingUser) return existingUser;
 
     const dbUser = await prisma.user.create({
       data: {
         clerkId: userId,
         name: `${user.firstName || ""} ${user.lastName || ""}`,
-        username:
-          user.username || user.emailAddresses[0].emailAddress.split("@")[0],
-        image: user.imageUrl,
+        username: user.username ?? user.emailAddresses[0].emailAddress.split("@")[0],
         email: user.emailAddresses[0].emailAddress,
+        image: user.imageUrl,
       },
     });
 
-    if (!dbUser) return;
-  } catch (error) {}
+    return dbUser;
+  } catch (error) {
+    console.log("Error in syncUser", error);
+  }
 }
 
-export async function getUserByClerkId(id: string) {
-  return await prisma.user.findUnique({
+export async function getUserByClerkId(clerkId: string) {
+  return prisma.user.findUnique({
     where: {
-      clerkId: id,
+      clerkId,
     },
     include: {
       _count: {
@@ -65,12 +67,9 @@ export async function getRandomUsers() {
   try {
     const userId = await getDbUserId();
 
-    if (!userId) {
-      console.log("User ID is null or undefined.");
-      return [];
-    }
+    if (!userId) return [];
 
-    //get 5 random users from the database excluding the current user and the users that the current user is following
+    // get 3 random users exclude ourselves & users that we already follow
     const randomUsers = await prisma.user.findMany({
       where: {
         AND: [
@@ -97,7 +96,7 @@ export async function getRandomUsers() {
           },
         },
       },
-      take: 5,
+      take: 3,
     });
 
     return randomUsers;
@@ -110,7 +109,8 @@ export async function getRandomUsers() {
 export async function toggleFollow(targetUserId: string) {
   try {
     const userId = await getDbUserId();
-    if (!userId) throw new Error("User not found");
+
+    if (!userId) return;
 
     if (userId === targetUserId) throw new Error("You cannot follow yourself");
 
@@ -124,7 +124,7 @@ export async function toggleFollow(targetUserId: string) {
     });
 
     if (existingFollow) {
-      //unfollow
+      // unfollow
       await prisma.follows.delete({
         where: {
           followerId_followingId: {
@@ -134,7 +134,7 @@ export async function toggleFollow(targetUserId: string) {
         },
       });
     } else {
-      //follow
+      // follow
       await prisma.$transaction([
         prisma.follows.create({
           data: {
@@ -142,19 +142,21 @@ export async function toggleFollow(targetUserId: string) {
             followingId: targetUserId,
           },
         }),
+
         prisma.notification.create({
           data: {
             type: "FOLLOW",
-            userId: targetUserId, //user that is being followed
-            creatorId: userId, //user that is following
+            userId: targetUserId, // user being followed
+            creatorId: userId, // user following
           },
         }),
       ]);
     }
+
     revalidatePath("/");
     return { success: true };
   } catch (error) {
-    console.log("Error toggling follow", error);
+    console.log("Error in toggleFollow", error);
     return { success: false, error: "Error toggling follow" };
   }
 }

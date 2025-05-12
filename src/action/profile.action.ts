@@ -1,53 +1,44 @@
 "use server";
 
-import { auth } from "@clerk/nextjs/server";
 import {prisma} from "@/lib/prisma";
-import { revalidatePath } from "next/cache";
 import { getDbUserId } from "./user.action";
+import { revalidatePath } from "next/cache";
 
-export async function getProfileByUsername(username: string) {
+export async function createPost(content: string, image: string) {
   try {
-    const user = await prisma.user.findUnique({
-      where: { username: username },
-      select: {
-        id: true,
-        name: true,
-        username: true,
-        bio: true,
-        image: true,
-        location: true,
-        website: true,
-        createdAt: true,
-        _count: {
-          select: {
-            followers: true,
-            following: true,
-            posts: true,
-          },
-        },
+    const userId = await getDbUserId();
+
+    if (!userId) return;
+
+    const post = await prisma.post.create({
+      data: {
+        content,
+        image,
+        authorId: userId,
       },
     });
 
-    return user;
+    revalidatePath("/"); // purge the cache for the home page
+    return { success: true, post };
   } catch (error) {
-    console.error("Error fetching profile:", error);
-    throw new Error("Failed to fetch profile");
+    console.error("Failed to create post:", error);
+    return { success: false, error: "Failed to create post" };
   }
 }
 
-export async function getUserPosts(userId: string) {
+export async function getPosts() {
   try {
     const posts = await prisma.post.findMany({
-      where: {
-        authorId: userId,
+      orderBy: {
+        createdAt: "desc",
       },
       include: {
         author: {
           select: {
             id: true,
             name: true,
-            username: true,
             image: true,
+            username: true,
           },
         },
         comments: {
@@ -55,9 +46,9 @@ export async function getUserPosts(userId: string) {
             author: {
               select: {
                 id: true,
-                name: true,
                 username: true,
                 image: true,
+                name: true,
               },
             },
           },
@@ -76,122 +67,149 @@ export async function getUserPosts(userId: string) {
             comments: true,
           },
         },
-      },
-      orderBy: {
-        createdAt: "desc",
       },
     });
 
     return posts;
   } catch (error) {
-    console.error("Error fetching user posts:", error);
-    throw new Error("Failed to fetch user posts");
+    console.log("Error in getPosts", error);
+    throw new Error("Failed to fetch posts");
   }
 }
 
-export async function getUserLikedPosts(userId: string) {
+export async function toggleLike(postId: string) {
   try {
-    const likedPosts = await prisma.post.findMany({
+    const userId = await getDbUserId();
+    if (!userId) return;
+
+    // check if like exists
+    const existingLike = await prisma.like.findUnique({
       where: {
-        likes: {
-          some: {
+        userId_postId: {
+          userId,
+          postId,
+        },
+      },
+    });
+
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { authorId: true },
+    });
+
+    if (!post) throw new Error("Post not found");
+
+    if (existingLike) {
+      // unlike
+      await prisma.like.delete({
+        where: {
+          userId_postId: {
             userId,
+            postId,
           },
         },
-      },
-      include: {
-        author: {
-          select: {
-            id: true,
-            name: true,
-            username: true,
-            image: true,
+      });
+    } else {
+      // like and create notification (only if liking someone else's post)
+      await prisma.$transaction([
+        prisma.like.create({
+          data: {
+            userId,
+            postId,
           },
-        },
-        comments: {
-          include: {
-            author: {
-              select: {
-                id: true,
-                name: true,
-                username: true,
-                image: true,
-              },
-            },
-          },
-          orderBy: {
-            createdAt: "asc",
-          },
-        },
-        likes: {
-          select: {
-            userId: true,
-          },
-        },
-        _count: {
-          select: {
-            likes: true,
-            comments: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+        }),
+        ...(post.authorId !== userId
+          ? [
+              prisma.notification.create({
+                data: {
+                  type: "LIKE",
+                  userId: post.authorId, // recipient (post author)
+                  creatorId: userId, // person who liked
+                  postId,
+                },
+              }),
+            ]
+          : []),
+      ]);
+    }
 
-    return likedPosts;
+    revalidatePath("/");
+    return { success: true };
   } catch (error) {
-    console.error("Error fetching liked posts:", error);
-    throw new Error("Failed to fetch liked posts");
+    console.error("Failed to toggle like:", error);
+    return { success: false, error: "Failed to toggle like" };
   }
 }
 
-export async function updateProfile(formData: FormData) {
+export async function createComment(postId: string, content: string) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) throw new Error("Unauthorized");
+    const userId = await getDbUserId();
 
-    const name = formData.get("name") as string;
-    const bio = formData.get("bio") as string;
-    const location = formData.get("location") as string;
-    const website = formData.get("website") as string;
+    if (!userId) return;
+    if (!content) throw new Error("Content is required");
 
-    const user = await prisma.user.update({
-      where: { clerkId },
-      data: {
-        name,
-        bio,
-        location,
-        website,
-      },
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { authorId: true },
     });
 
-    revalidatePath("/profile");
-    return { success: true, user };
+    if (!post) throw new Error("Post not found");
+
+    // Create comment and notification in a transaction
+    const [comment] = await prisma.$transaction(async (tx) => {
+      // Create comment first
+      const newComment = await tx.comment.create({
+        data: {
+          content,
+          authorId: userId,
+          postId,
+        },
+      });
+
+      // Create notification if commenting on someone else's post
+      if (post.authorId !== userId) {
+        await tx.notification.create({
+          data: {
+            type: "COMMENT",
+            userId: post.authorId,
+            creatorId: userId,
+            postId,
+            commentId: newComment.id,
+          },
+        });
+      }
+
+      return [newComment];
+    });
+
+    revalidatePath(`/`);
+    return { success: true, comment };
   } catch (error) {
-    console.error("Error updating profile:", error);
-    return { success: false, error: "Failed to update profile" };
+    console.error("Failed to create comment:", error);
+    return { success: false, error: "Failed to create comment" };
   }
 }
 
-export async function isFollowing(userId: string) {
+export async function deletePost(postId: string) {
   try {
-    const currentUserId = await getDbUserId();
-    if (!currentUserId) return false;
+    const userId = await getDbUserId();
 
-    const follow = await prisma.follows.findUnique({
-      where: {
-        followerId_followingId: {
-          followerId: currentUserId,
-          followingId: userId,
-        },
-      },
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { authorId: true },
     });
 
-    return !!follow;
+    if (!post) throw new Error("Post not found");
+    if (post.authorId !== userId) throw new Error("Unauthorized - no delete permission");
+
+    await prisma.post.delete({
+      where: { id: postId },
+    });
+
+    revalidatePath("/"); // purge the cache
+    return { success: true };
   } catch (error) {
-    console.error("Error checking follow status:", error);
-    return false;
+    console.error("Failed to delete post:", error);
+    return { success: false, error: "Failed to delete post" };
   }
 }
