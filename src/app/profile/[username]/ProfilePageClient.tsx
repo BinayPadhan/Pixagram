@@ -96,6 +96,12 @@ function ProfilePageClient({
 
   const formattedDate = format(new Date(user.createdAt), "MMMM yyyy");
 
+  const isFormUnchanged =
+    editForm.name === user.name &&
+    editForm.bio === user.bio &&
+    editForm.location === user.location &&
+    editForm.website === user.website;
+
   return (
     <div className="max-w-3xl mx-auto">
       <div className="grid grid-cols-1 gap-6">
@@ -306,7 +312,12 @@ function ProfilePageClient({
               <DialogClose asChild>
                 <Button variant="outline">Cancel</Button>
               </DialogClose>
-              <Button onClick={handleEditSubmit}>Save Changes</Button>
+              <Button
+                onClick={handleEditSubmit}
+                disabled={isFormUnchanged || !editForm.name.trim()}
+              >
+                Save Changes
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
