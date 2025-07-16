@@ -76,7 +76,7 @@ function PostCard({ post, dbUserId }: { post: Post; dbUserId: string | null }) {
   };
   return (
     <Card className="overflow-hidden">
-      <CardContent className="p-4 sm:p-6">
+      <CardContent className="p-4 sm:p-6 ">
         <div className="space-y-4">
           <div className="flex space-x-3 sm:space-x-4">
             <Link href={`/profile/${post.author.username}`}>
@@ -113,7 +113,7 @@ function PostCard({ post, dbUserId }: { post: Post; dbUserId: string | null }) {
           {/* POST IMAGE */}
           {post.image && (
             <div className="rounded-lg overflow-hidden">
-              <img src={post.image} alt="Post content" className="w-full h-auto object-cover" />
+              <img src={post.image} alt="Post content" className="aspect-[1/1] w-full rounded-md h-auto object-cover" />
             </div>
           )}
 
